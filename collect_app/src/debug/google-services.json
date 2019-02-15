@@ -1,40 +1,39 @@
 {
   "project_info": {
-    "project_number": "422392826654",
-    "project_id": "opendatakit-collect-debug"
+    "project_number": "639586133475",
+    "firebase_url": "https://bdb-collect-a8bd5.firebaseio.com",
+    "project_id": "bdb-collect-a8bd5",
+    "storage_bucket": "bdb-collect-a8bd5.appspot.com"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:422392826654:android:5e1d7c3c296329e8",
+        "mobilesdk_app_id": "1:639586133475:android:21b4c73e6e959a05",
         "android_client_info": {
-          "package_name": "org.odk.collect.android"
+          "package_name": "be.itlicious.odk.collect.bdb"
         }
       },
       "oauth_client": [
         {
-          "client_id": "422392826654-aj7or9nvv10cmk76tbrjhaffq2c8t1lt.apps.googleusercontent.com",
+          "client_id": "639586133475-0nktgk65s3knhv814da0ofna8rqqs8bj.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyDBd6lcoo2QqHmj6tzjQXJWkqiswhRkoCA"
+          "current_key": "AIzaSyASxR-d1k1eyO48Zfg0x3UcHchrqb5dxAM"
         }
       ],
       "services": {
         "analytics_service": {
-          "status": 2,
-          "analytics_property": {
-            "tracking_id": "UA-111083836-2"
-          }
+          "status": 1
         },
         "appinvite_service": {
           "status": 1,
           "other_platform_oauth_client": []
         },
         "ads_service": {
-          "status": 1
+          "status": 2
         }
       }
     }

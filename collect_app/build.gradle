@@ -68,11 +68,11 @@ android {
     compileSdkVersion(28)
 
     defaultConfig {
-        applicationId('org.odk.collect.android')
+        applicationId('be.itlicious.odk.collect.bdb')
         minSdkVersion(16)
         targetSdkVersion(26)
         versionCode LEGACY_BUILD_NUMBER_OFFSET + getMasterCommitCount()
-        versionName getVersionName()
+        versionName "1.0.0"
         testInstrumentationRunner('android.support.test.runner.AndroidJUnitRunner')
         multiDexEnabled true
         vectorDrawables.useSupportLibrary = true

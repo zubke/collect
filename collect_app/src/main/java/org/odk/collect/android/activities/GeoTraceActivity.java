@@ -18,14 +18,13 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Parcel;
+import android.os.Parcelable;
 import android.support.annotation.VisibleForTesting;
 import android.view.View;
 import android.view.Window;
 import android.widget.Button;
 import android.widget.ImageButton;
-import android.widget.RadioButton;
-import android.widget.RadioGroup;
-import android.widget.Spinner;
 
 import org.odk.collect.android.R;
 import org.odk.collect.android.map.GoogleMapFragment;
@@ -34,17 +33,21 @@ import org.odk.collect.android.map.MapPoint;
 import org.odk.collect.android.map.OsmMapFragment;
 import org.odk.collect.android.preferences.GeneralKeys;
 import org.odk.collect.android.spatial.MapHelper;
-import org.odk.collect.android.utilities.ToastUtils;
 import org.odk.collect.android.widgets.GeoTraceWidget;
 import org.osmdroid.tileprovider.IRegisterReceiver;
 
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+
+import timber.log.Timber;
 
 import static org.odk.collect.android.utilities.PermissionUtils.areLocationPermissionsGranted;
 
@@ -53,12 +56,11 @@ public class GeoTraceActivity extends BaseGeoMapActivity implements IRegisterRec
     public static final String MAP_CENTER_KEY = "map_center";
     public static final String MAP_ZOOM_KEY = "map_zoom";
     public static final String POINTS_KEY = "points";
+    public static final String TRACES_KEY = "traces";
     public static final String BEEN_PAUSED_KEY = "been_paused";
     public static final String MODE_ACTIVE_KEY = "mode_active";
-    public static final String TRACE_MODE_KEY = "trace_mode";
     public static final String PLAY_CHECK_KEY = "play_check";
-    public static final String TIME_DELAY_KEY = "time_delay";
-    public static final String TIME_UNITS_KEY = "time_units";
+    private static final long AUTOMATIC_REGISTRATION_TIME = 5; // In seconds
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
     private ScheduledFuture schedulerHandler;
@@ -73,18 +75,9 @@ public class GeoTraceActivity extends BaseGeoMapActivity implements IRegisterRec
     private Button manualButton;
     private ImageButton pauseButton;
 
-    private View traceSettingsView;
-    private View polygonOrPolylineView;
-
-    private AlertDialog traceSettingsDialog;
-    private AlertDialog polygonOrPolylineDialog;
-
     private boolean beenPaused;
     private boolean modeActive;
-    private Integer traceMode = 0; // 0 manual, 1 is automatic
     private boolean playCheck;
-    private Spinner timeUnits;
-    private Spinner timeDelay;
 
     private AlertDialog zoomDialog;
     private View zoomDialogView;
@@ -95,8 +88,8 @@ public class GeoTraceActivity extends BaseGeoMapActivity implements IRegisterRec
     private MapPoint restoredMapCenter;
     private Double restoredMapZoom;
     private List<MapPoint> restoredPoints;
-    private int restoredTimeDelayIndex = 3;
-    private int restoredTimeUnitsIndex;
+    private List<Trace> traces = new ArrayList<>();
+    private DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -106,10 +99,8 @@ public class GeoTraceActivity extends BaseGeoMapActivity implements IRegisterRec
             restoredPoints = savedInstanceState.getParcelableArrayList(POINTS_KEY);
             beenPaused = savedInstanceState.getBoolean(BEEN_PAUSED_KEY, false);
             modeActive = savedInstanceState.getBoolean(MODE_ACTIVE_KEY, false);
-            traceMode = savedInstanceState.getInt(TRACE_MODE_KEY, 0);
             playCheck = savedInstanceState.getBoolean(PLAY_CHECK_KEY, false);
-            restoredTimeDelayIndex = savedInstanceState.getInt(TIME_DELAY_KEY, 3);
-            restoredTimeUnitsIndex = savedInstanceState.getInt(TIME_UNITS_KEY, 0);
+            traces = savedInstanceState.getParcelableArrayList(TRACES_KEY);
         }
 
         if (!areLocationPermissionsGranted(this)) {
@@ -151,12 +142,10 @@ public class GeoTraceActivity extends BaseGeoMapActivity implements IRegisterRec
         state.putParcelable(MAP_CENTER_KEY, map.getCenter());
         state.putDouble(MAP_ZOOM_KEY, map.getZoom());
         state.putParcelableArrayList(POINTS_KEY, new ArrayList<>(map.getPointsOfPoly(featureId)));
+        state.putParcelableArrayList(TRACES_KEY, new ArrayList<>(traces));
         state.putBoolean(BEEN_PAUSED_KEY, beenPaused);
         state.putBoolean(MODE_ACTIVE_KEY, modeActive);
-        state.putInt(TRACE_MODE_KEY, traceMode);
         state.putBoolean(PLAY_CHECK_KEY, playCheck);
-        state.putInt(TIME_DELAY_KEY, timeDelay.getSelectedItemPosition());
-        state.putInt(TIME_UNITS_KEY, timeUnits.getSelectedItemPosition());
     }
 
     @Override protected void onDestroy() {
@@ -182,16 +171,6 @@ public class GeoTraceActivity extends BaseGeoMapActivity implements IRegisterRec
         }
         helper.setBasemap();
 
-        traceSettingsView = getLayoutInflater().inflate(R.layout.geotrace_dialog, null);
-        RadioGroup group = traceSettingsView.findViewById(R.id.radio_group);
-        group.check(group.getChildAt(traceMode).getId());
-        timeDelay = traceSettingsView.findViewById(R.id.trace_delay);
-        timeDelay.setSelection(restoredTimeDelayIndex);
-        timeUnits = traceSettingsView.findViewById(R.id.trace_scale);
-        timeUnits.setSelection(restoredTimeUnitsIndex);
-
-        polygonOrPolylineView = getLayoutInflater().inflate(R.layout.polygon_polyline_dialog, null);
-
         clearButton = findViewById(R.id.clear);
         clearButton.setOnClickListener(v -> showClearDialog());
 
@@ -214,63 +193,16 @@ public class GeoTraceActivity extends BaseGeoMapActivity implements IRegisterRec
 
         ImageButton saveButton = findViewById(R.id.geotrace_save);
         saveButton.setOnClickListener(v -> {
-            if (!map.getPointsOfPoly(featureId).isEmpty()) {
-                polygonOrPolylineDialog.show();
-            } else {
-                finishWithResult();
-            }
+            finishWithResult();
         });
 
         playButton = findViewById(R.id.play);
         playButton.setOnClickListener(v -> {
-            if (!playCheck) {
-                if (!beenPaused) {
-                    traceSettingsDialog.show();
-                } else {
-                    RadioGroup rb = traceSettingsView.findViewById(R.id.radio_group);
-                    View radioButton = rb.findViewById(rb.getCheckedRadioButtonId());
-                    traceMode = rb.indexOfChild(radioButton);
-                    if (traceMode == 0) {
-                        setupManualMode();
-                    } else if (traceMode == 1) {
-                        setupAutomaticMode();
-                    } else {
-                        //Do nothing
-                    }
-                }
-                playCheck = true;
-            } else {
-                playCheck = false;
-                startGeoTrace();
-            }
+            startGeoTrace();
         });
 
         manualButton = findViewById(R.id.manual_button);
         manualButton.setOnClickListener(v -> addVertex());
-
-        Button polygonSave = polygonOrPolylineView.findViewById(R.id.polygon_save);
-        polygonSave.setOnClickListener(v -> {
-            if (map.getPointsOfPoly(featureId).size() > 2) {
-                // Close the polygon.
-                map.appendPointToPoly(featureId, map.getPointsOfPoly(featureId).get(0));
-                polygonOrPolylineDialog.dismiss();
-                finishWithResult();
-            } else {
-                polygonOrPolylineDialog.dismiss();
-                ToastUtils.showShortToastInMiddle(getString(R.string.polygon_validator));
-            }
-        });
-
-        Button polylineSave = polygonOrPolylineView.findViewById(R.id.polyline_save);
-        polylineSave.setOnClickListener(v -> {
-            if (map.getPointsOfPoly(featureId).size() > 1) {
-                polygonOrPolylineDialog.dismiss();
-                finishWithResult();
-            } else {
-                polygonOrPolylineDialog.dismiss();
-                ToastUtils.showShortToastInMiddle(getString(R.string.polyline_validator));
-            }
-        });
 
         buildDialogs();
 
@@ -311,9 +243,8 @@ public class GeoTraceActivity extends BaseGeoMapActivity implements IRegisterRec
     }
 
     private void finishWithResult() {
-        List<MapPoint> points = map.getPointsOfPoly(featureId);
         setResult(RESULT_OK, new Intent().putExtra(
-            FormEntryActivity.GEOTRACE_RESULTS, formatPoints(points)));
+            FormEntryActivity.GEOTRACE_RESULTS, formatPoints(traces)));
         finish();
     }
 
@@ -348,45 +279,25 @@ public class GeoTraceActivity extends BaseGeoMapActivity implements IRegisterRec
      * Serializes a list of polyline vertices into a string, in the format
      * appropriate for storing as the result of this form question.
      */
-    private String formatPoints(List<MapPoint> points) {
-        String result = "";
-        for (MapPoint point : points) {
-            // TODO(ping): Remove excess precision when we're ready for the output to change.
-            result += String.format(Locale.US, "%s %s %s %s;",
-                Double.toString(point.lat), Double.toString(point.lon),
-                Double.toString(point.alt), Float.toString((float) point.sd));
+    private String formatPoints(List<Trace> traces) {
+        StringBuilder stringBuilder = new StringBuilder();
+        for (Trace trace : traces) {
+            final MapPoint point = trace.mapPoint;
+            final Date date = trace.date;
+
+            final String formattedPoint = String.format(Locale.US, "%s %s %s %s %s;",
+                    Double.toString(point.lat),
+                    Double.toString(point.lon),
+                    Float.toString((float) point.sd),
+                    Double.toString(point.alt),
+                    dateFormat.format(date));
+
+            stringBuilder.append(formattedPoint);
         }
-        return result.trim();
+        return stringBuilder.toString().trim();
     }
 
     private void buildDialogs() {
-        traceSettingsDialog = new AlertDialog.Builder(this)
-            .setTitle(getString(R.string.select_geotrace_mode))
-            .setView(traceSettingsView)
-            .setPositiveButton(getString(R.string.start), (dialog, id) -> {
-                startGeoTrace();
-                dialog.cancel();
-                traceSettingsDialog.dismiss();
-            })
-            .setNegativeButton(R.string.cancel, (dialog, id) -> {
-                dialog.cancel();
-                traceSettingsDialog.dismiss();
-                playCheck = false;
-
-            })
-            .setOnCancelListener(dialog -> playCheck = false)
-            .create();
-
-        polygonOrPolylineDialog = new AlertDialog.Builder(this)
-            .setTitle(getString(R.string.polygon_or_polyline))
-            .setView(polygonOrPolylineView)
-            .setNegativeButton(R.string.cancel, (dialog, id) -> dialog.cancel())
-            .setOnCancelListener(dialog -> {
-                dialog.cancel();
-                traceSettingsDialog.dismiss();
-            })
-            .create();
-
         zoomDialogView = getLayoutInflater().inflate(R.layout.geo_zoom_dialog, null);
 
         zoomLocationButton = zoomDialogView.findViewById(R.id.zoom_location);
@@ -403,72 +314,15 @@ public class GeoTraceActivity extends BaseGeoMapActivity implements IRegisterRec
     }
 
     private void startGeoTrace() {
-        RadioGroup rb = traceSettingsView.findViewById(R.id.radio_group);
-        View radioButton = rb.findViewById(rb.getCheckedRadioButtonId());
-        int idx = rb.indexOfChild(radioButton);
-        beenPaused = true;
-        traceMode = idx;
-        if (traceMode == 0) {
-            setupManualMode();
-        } else if (traceMode == 1) {
-            setupAutomaticMode();
-        } else {
-            playCheck = false;
-        }
+        setupAutomaticMode();
         playButton.setVisibility(View.GONE);
         clearButton.setEnabled(false);
         pauseButton.setVisibility(View.VISIBLE);
     }
 
-    private void setupManualMode() {
-
-        manualButton.setVisibility(View.VISIBLE);
-        modeActive = true;
-
-    }
-
     private void setupAutomaticMode() {
-        manualButton.setVisibility(View.VISIBLE);
-        String delay = timeDelay.getSelectedItem().toString();
-        String units = timeUnits.getSelectedItem().toString();
-        Long timeDelay;
-        TimeUnit timeUnitsValue;
-        if (units.equals(getString(R.string.minutes))) {
-            timeDelay = Long.parseLong(delay) * 60;
-            timeUnitsValue = TimeUnit.SECONDS;
-
-        } else {
-            //in Seconds
-            timeDelay = Long.parseLong(delay);
-            timeUnitsValue = TimeUnit.SECONDS;
-        }
-
-        setGeoTraceScheduler(timeDelay, timeUnitsValue);
+        setGeoTraceScheduler(AUTOMATIC_REGISTRATION_TIME, TimeUnit.SECONDS);
         modeActive = true;
-    }
-
-    public void setGeoTraceMode(View view) {
-        boolean checked = ((RadioButton) view).isChecked();
-        switch (view.getId()) {
-            case R.id.trace_manual:
-                if (checked) {
-                    traceMode = 0;
-                    timeUnits.setVisibility(View.GONE);
-                    timeDelay.setVisibility(View.GONE);
-                    timeDelay.invalidate();
-                    timeUnits.invalidate();
-                }
-                break;
-            case R.id.trace_automatic:
-                if (checked) {
-                    traceMode = 1;
-                    timeUnits.setVisibility(View.VISIBLE);
-                    timeDelay.setVisibility(View.VISIBLE);
-                    timeDelay.invalidate();
-                    timeUnits.invalidate();
-                }
-                break;
-        }
     }
 
     public void setGeoTraceScheduler(long delay, TimeUnit units) {
@@ -494,6 +348,13 @@ public class GeoTraceActivity extends BaseGeoMapActivity implements IRegisterRec
     private void addVertex() {
         MapPoint point = map.getGpsLocation();
         if (point != null) {
+            Timber.d("adding point: " + point.lat + "/" + point.lon);
+
+            final Trace trace = new Trace();
+            trace.mapPoint = point;
+            trace.date = new Date();
+            traces.add(trace);
+
             map.appendPointToPoly(featureId, point);
         }
     }
@@ -561,5 +422,43 @@ public class GeoTraceActivity extends BaseGeoMapActivity implements IRegisterRec
 
     @VisibleForTesting public MapFragment getMapFragment() {
         return map;
+    }
+
+    public static class Trace implements Parcelable  {
+        MapPoint mapPoint;
+        Date date;
+
+
+        @Override
+        public int describeContents() {
+            return 0;
+        }
+
+        @Override
+        public void writeToParcel(Parcel dest, int flags) {
+            dest.writeParcelable(this.mapPoint, flags);
+            dest.writeLong(this.date != null ? this.date.getTime() : -1);
+        }
+
+        public Trace() {
+        }
+
+        protected Trace(Parcel in) {
+            this.mapPoint = in.readParcelable(MapPoint.class.getClassLoader());
+            long tmpDate = in.readLong();
+            this.date = tmpDate == -1 ? null : new Date(tmpDate);
+        }
+
+        public static final Creator<Trace> CREATOR = new Creator<Trace>() {
+            @Override
+            public Trace createFromParcel(Parcel source) {
+                return new Trace(source);
+            }
+
+            @Override
+            public Trace[] newArray(int size) {
+                return new Trace[size];
+            }
+        };
     }
 }
